@@ -102,7 +102,7 @@ def test_hook_script_delivers_a_cold_handoff_end_to_end(
     output = json.loads(result.stdout)
     assert output["decision"] == "block"
     resume_line = output["reason"].splitlines()[-1]
-    assert resume_line.startswith("@/")
+    assert resume_line.startswith("@")
     handoff = Path(resume_line.removeprefix("@"))
     assert handoff.is_relative_to(tmp_path / ".claude" / "handoffs")
     digest_line = f"Full detail (read only if needed): {handoff.with_suffix('.digest.md')}"

@@ -146,7 +146,8 @@ def test_cold_success_blocks_with_the_resume_line_of_an_existing_handoff(
     assert output["decision"] == "block"
     reason = str(output["reason"])
     resume_line = resume_line_of(reason)
-    assert resume_line.startswith("@/")
+    assert resume_line.startswith("@")
+    assert Path(resume_line.removeprefix("@")).is_absolute()
     handoff = Path(resume_line.removeprefix("@"))
     assert handoff.is_file()
     assert handoff.read_text(encoding="utf-8").startswith("# Handoff: parser bug")
@@ -179,7 +180,8 @@ def test_cold_message_without_a_clipboard_does_not_mention_it(
 
     assert output["decision"] == "block"
     assert "clipboard" not in str(output["reason"])
-    assert resume_line_of(str(output["reason"])).startswith("@/")
+    resume_line = resume_line_of(str(output["reason"]))
+    assert Path(resume_line.removeprefix("@")).is_absolute()
 
 
 def test_cold_mode_sends_the_focus_to_haiku(

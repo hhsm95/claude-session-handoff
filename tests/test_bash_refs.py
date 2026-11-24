@@ -27,7 +27,8 @@ def test_a_file_named_twice_counts_once(project: Path) -> None:
 
 
 def test_an_absolute_path_inside_the_project_is_reported_relative(project: Path) -> None:
-    command = f"cat {project / 'src' / 'a.py'}"
+    # Bash commands spell paths with forward slashes, also under Git Bash on Windows.
+    command = f"cat {(project / 'src' / 'a.py').as_posix()}"
 
     assert files_in_command(command, project) == ("src/a.py",)
 
