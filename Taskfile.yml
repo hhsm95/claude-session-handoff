@@ -1,0 +1,50 @@
+# Shortcuts for https://taskfile.dev. Each task wraps a uv command, so pyproject.toml stays the
+# single source of truth for how things are checked.
+version: "3"
+
+tasks:
+  default:
+    desc: List the available tasks
+    cmds:
+      - task --list
+    silent: true
+
+  install:
+    desc: Install dev dependencies from the lockfile
+    cmds:
+      - uv sync
+
+  lint:
+    desc: Run ruff (lint and format check)
+    cmds:
+      - uv run ruff check .
+      - uv run ruff format --check .
+
+  lint:fix:
+    desc: Run ruff and apply safe fixes
+    cmds:
+      - uv run ruff check --fix .
+      - uv run ruff format .
+
+  typecheck:
+    desc: Type-check with mypy (strict)
+    cmds:
+      - uv run mypy
+
+  test:
+    desc: Run the test suite
+    cmds:
+      - uv run pytest -q
+
+  check:
+    desc: Lint, type-check and test (what CI runs)
+    cmds:
+      - task: lint
+      - task: typecheck
+      - task: test
+
+  dev:
+    desc: Start Claude Code with this checkout loaded as a plugin
+    interactive: true
+    cmds:
+      - claude --plugin-dir .

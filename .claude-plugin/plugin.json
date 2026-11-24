@@ -1,0 +1,11 @@
+{
+  "name": "session-handoff",
+  "version": "0.1.0",
+  "description": "Turn the current Claude Code session into a handoff document you can resume in a fresh session without paying for a full context re-read.",
+  "author": {
+    "name": "Hugo Sandoval"
+  },
+  "homepage": "https://github.com/hhsm95/claude-session-handoff#readme",
+  "repository": "https://github.com/hhsm95/claude-session-handoff",
+  "license": "MIT"
+}

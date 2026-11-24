@@ -1,0 +1,14 @@
+{
+  "name": "session-handoff",
+  "description": "Handoff documents for Claude Code sessions",
+  "owner": {
+    "name": "Hugo Sandoval"
+  },
+  "plugins": [
+    {
+      "name": "session-handoff",
+      "source": "./",
+      "description": "Turn the current session into a handoff document you can resume in a fresh session."
+    }
+  ]
+}

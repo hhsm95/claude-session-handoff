@@ -1,0 +1,53 @@
+[project]
+name = "claude-session-handoff"
+version = "0.1.0"
+description = "Claude Code plugin that turns the current session into a handoff document for a fresh one."
+readme = "README.md"
+license = "MIT"
+requires-python = ">=3.11"
+dependencies = []
+
+[dependency-groups]
+dev = [
+    "mypy>=1.13",
+    "pytest>=8.3",
+    "ruff>=0.8",
+]
+
+[tool.pytest.ini_options]
+pythonpath = ["src"]
+testpaths = ["tests"]
+
+[tool.mypy]
+strict = true
+mypy_path = "src"
+files = ["src", "hooks", "tests"]
+
+[tool.ruff]
+line-length = 100
+target-version = "py311"
+src = ["src", "tests"]
+# tools/ holds throwaway measurement scripts, not part of the shipped plugin.
+extend-exclude = ["tools", ".claude"]
+
+[tool.ruff.lint]
+select = [
+    "E",    # pycodestyle errors
+    "W",    # pycodestyle warnings
+    "F",    # pyflakes
+    "I",    # isort
+    "B",    # bugbear
+    "UP",   # pyupgrade
+    "SIM",  # simplify
+    "C4",   # comprehensions
+    "PTH",  # prefer pathlib
+    "RET",  # return consistency
+    "T20",  # forbid print
+    "PL",   # pylint
+]
+ignore = [
+    "PLR2004",  # magic values in comparisons are common in tests
+]
+
+[tool.ruff.lint.per-file-ignores]
+"tests/**" = ["PLR0913"]
