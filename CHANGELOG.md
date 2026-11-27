@@ -7,6 +7,8 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [0.2.0] - 2026-11-27
+
 ### Added
 
 - Every compaction (idle, context limit or `/compact`) is now asked to write its summary in the
