@@ -10,8 +10,10 @@ import pytest
 from session_handoff.storage import (
     HandoffPaths,
     apply_retention,
+    compact_summary_path,
     handoff_paths,
     project_slug,
+    write_compact_summary,
     write_digest,
     write_handoff,
 )
@@ -158,6 +160,24 @@ def test_retention_counts_a_digest_without_handoff_as_a_pair(tmp_path: Path) -> 
     assert not older.digest.exists()
 
 
+def test_retention_counts_compaction_summaries_apart_from_handoffs(tmp_path: Path) -> None:
+    pairs = [make_paths(tmp_path, second) for second in (1, 2, 3)]
+    for pair in pairs:
+        save_pair(pair)
+    folder = pairs[0].handoff.parent
+    summaries = [
+        compact_summary_path(tmp_path / "project", SESSION_ID, at(second), tmp_path / "base")
+        for second in range(10, 15)
+    ]
+    for summary in summaries:
+        write_compact_summary(summary, "summary")
+
+    apply_retention(folder, keep=3)
+
+    assert all(pair.handoff.exists() and pair.digest.exists() for pair in pairs)
+    assert [summary.exists() for summary in summaries] == [False, False, True, True, True]
+
+
 def test_retention_leaves_files_that_are_not_handoff_pairs(tmp_path: Path) -> None:
     pairs = [make_paths(tmp_path, second) for second in (1, 2)]
     for pair in pairs:
@@ -232,3 +252,60 @@ def test_existing_open_folders_and_files_are_tightened(tmp_path: Path) -> None:
     assert mode_of(tmp_path / "base") == 0o700
     assert mode_of(paths.handoff) == 0o600
     assert paths.handoff.read_text(encoding="utf-8") == "new"
+
+
+# --- compaction summaries -----------------------------------------------------------------------
+
+
+def test_a_compact_summary_path_sits_beside_the_handoff_with_the_compact_suffix(
+    tmp_path: Path,
+) -> None:
+    paths = make_paths(tmp_path)
+
+    summary = compact_summary_path(tmp_path / "project", SESSION_ID, at(5), tmp_path / "base")
+
+    assert summary.parent == paths.handoff.parent
+    assert summary.name == paths.handoff.name.removesuffix(".md") + ".compact.md"
+
+
+def test_a_compact_summary_is_private_and_utf8(tmp_path: Path) -> None:
+    summary = compact_summary_path(tmp_path / "project", SESSION_ID, at(5), tmp_path / "base")
+
+    write_compact_summary(summary, "café")
+
+    assert summary.read_text(encoding="utf-8") == "café"
+    if sys.platform != "win32":
+        assert stat.S_IMODE(summary.stat().st_mode) == 0o600
+        assert stat.S_IMODE(summary.parent.stat().st_mode) == 0o700
+
+
+def test_retention_bounds_compact_summaries_to_the_newest_keep(tmp_path: Path) -> None:
+    cwd = tmp_path / "project"
+    summaries = [
+        compact_summary_path(cwd, SESSION_ID, at(second), tmp_path / "base")
+        for second in range(1, 4)
+    ]
+    for summary in summaries:
+        write_compact_summary(summary, "summary")
+
+    apply_retention(summaries[0].parent, keep=2)
+
+    assert [summary.exists() for summary in summaries] == [False, True, True]
+
+
+def test_a_compact_summary_does_not_count_against_the_handoffs_of_the_same_moment(
+    tmp_path: Path,
+) -> None:
+    cwd = tmp_path / "project"
+    summary = compact_summary_path(cwd, SESSION_ID, at(1), tmp_path / "base")
+    write_compact_summary(summary, "summary")
+    older = make_paths(tmp_path, 1)
+    write_handoff(older, "handoff")
+    newer = make_paths(tmp_path, 2)
+    write_handoff(newer, "newer")
+
+    apply_retention(summary.parent, keep=1)
+
+    assert summary.exists()
+    assert not older.handoff.exists()
+    assert newer.handoff.exists()

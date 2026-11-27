@@ -1,7 +1,7 @@
 import io
 import json
 
-from session_handoff.hook_output import emit_block, emit_context
+from session_handoff.hook_output import emit_block, emit_context, emit_text
 
 
 def test_block_output_hides_the_prompt_and_carries_the_reason() -> None:
@@ -40,3 +40,11 @@ def test_output_keeps_non_ascii_text_readable() -> None:
     emit_block("café", stream)
 
     assert "café" in stream.getvalue()
+
+
+def test_plain_text_output_is_the_text_alone() -> None:
+    stream = io.StringIO()
+
+    emit_text("use these sections: café", stream)
+
+    assert stream.getvalue() == "use these sections: café"

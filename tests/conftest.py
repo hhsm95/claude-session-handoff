@@ -39,6 +39,61 @@ GIT_WORST_CASE_COMMANDS = (
 )
 
 
+def write_compacted_session(
+    path: Path,
+    *,
+    boundary_uuid: str = "b1",
+    session_id: str | None = "s1",
+    cwd: str | None = "/work/app",
+    trigger: str = "auto",
+    pre_tokens: int = 100_000,
+    reply_tokens: int | None = 10_000,
+) -> Path:
+    """Write a session with one boundary two hours after its last request.
+
+    With `reply_tokens` a request follows the boundary and writes that many uncached tokens, so
+    the compaction is measured with `saved = pre_tokens - reply_tokens`; without it the boundary
+    is the last line and stays unused.
+    """
+
+    def assistant(message_id: str, minute: int, cache_creation: int) -> dict[str, object]:
+        return {
+            "type": "assistant",
+            "isSidechain": False,
+            "timestamp": f"2026-03-01T{minute // 60:02d}:{minute % 60:02d}:00+00:00",
+            "message": {
+                "id": message_id,
+                "role": "assistant",
+                "model": "claude-opus-4-1",
+                "content": [{"type": "text", "text": "answer"}],
+                "usage": {
+                    "input_tokens": 0,
+                    "cache_creation_input_tokens": cache_creation,
+                    "cache_creation": {"ephemeral_1h_input_tokens": cache_creation},
+                },
+            },
+        }
+
+    boundary: dict[str, object] = {
+        "type": "system",
+        "subtype": "compact_boundary",
+        "isSidechain": False,
+        "uuid": boundary_uuid,
+        "timestamp": "2026-03-01T03:00:00+00:00",
+        "compactMetadata": {"trigger": trigger, "preTokens": pre_tokens, "postTokens": 5_000},
+    }
+    if session_id is not None:
+        boundary["sessionId"] = session_id
+    if cwd is not None:
+        boundary["cwd"] = cwd
+    records = [assistant("msg_before", 60, 100), boundary]
+    if reply_tokens is not None:
+        records.append(assistant("msg_after", 185, reply_tokens))
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text("\n".join(json.dumps(record) for record in records) + "\n", encoding="utf-8")
+    return path
+
+
 @pytest.fixture
 def write_transcript(tmp_path: Path) -> TranscriptWriter:
     """Write a two-entry transcript whose last activity is `last_activity`.

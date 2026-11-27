@@ -5,12 +5,17 @@ from pathlib import Path
 import pytest
 
 from session_handoff.transcript import (
+    CompactBoundary,
     Entry,
+    RequestUsage,
     TextBlock,
+    TimelineItem,
     ToolResultBlock,
     ToolUseBlock,
     Transcript,
+    parse_timeline,
     parse_transcript,
+    read_timeline,
     read_transcript,
 )
 
@@ -217,3 +222,98 @@ def test_json_booleans_in_usage_are_not_counted_as_numbers() -> None:
     assert usage.input_tokens == 0
     assert usage.cache_read_input_tokens == 0
     assert usage.output_tokens == 7
+
+
+COMPACTION_FIXTURE = (
+    Path(__file__).resolve().parent / "fixtures" / "session_compaction_2_1_332.jsonl"
+)
+
+
+@pytest.fixture(scope="module")
+def timeline() -> tuple[TimelineItem, ...]:
+    return read_timeline(COMPACTION_FIXTURE)
+
+
+def boundaries_of(items: tuple[TimelineItem, ...]) -> dict[str, CompactBoundary]:
+    return {item.uuid: item for item in items if isinstance(item, CompactBoundary)}
+
+
+def test_timeline_keeps_file_order_of_boundaries_and_main_thread_requests(
+    timeline: tuple[TimelineItem, ...],
+) -> None:
+    order = [
+        item.uuid if isinstance(item, CompactBoundary) else item.message_id for item in timeline
+    ]
+
+    assert order == ["msg_a", "cb-auto", "msg_b", "cb-manual", "cb-bare", "msg_c"]
+
+
+def test_timeline_boundary_exposes_its_compact_metadata(
+    timeline: tuple[TimelineItem, ...],
+) -> None:
+    auto = boundaries_of(timeline)["cb-auto"]
+
+    assert auto == CompactBoundary(
+        uuid="cb-auto",
+        timestamp=datetime(2026, 2, 1, 10, 5, tzinfo=UTC),
+        trigger="auto",
+        pre_tokens=238796,
+        post_tokens=21000,
+        session_id="s-9",
+        cwd="/work/app",
+    )
+
+
+def test_timeline_wrong_typed_metadata_fields_become_none(
+    timeline: tuple[TimelineItem, ...],
+) -> None:
+    manual = boundaries_of(timeline)["cb-manual"]
+
+    assert manual.trigger == "manual"
+    assert manual.pre_tokens is None
+    assert manual.post_tokens is None
+
+
+def test_timeline_boundary_without_metadata_has_every_field_none(
+    timeline: tuple[TimelineItem, ...],
+) -> None:
+    bare = boundaries_of(timeline)["cb-bare"]
+
+    assert (bare.trigger, bare.pre_tokens, bare.post_tokens) == (None, None, None)
+    assert (bare.session_id, bare.cwd) == (None, None)
+
+
+def test_timeline_ignores_sidechain_boundaries_and_boundaries_without_uuid(
+    timeline: tuple[TimelineItem, ...],
+) -> None:
+    assert set(boundaries_of(timeline)) == {"cb-auto", "cb-manual", "cb-bare"}
+
+
+def test_timeline_requests_are_main_thread_only_and_merged_by_message_id(
+    timeline: tuple[TimelineItem, ...],
+) -> None:
+    requests = [item for item in timeline if isinstance(item, RequestUsage)]
+
+    assert [request.message_id for request in requests] == ["msg_a", "msg_b", "msg_c"]
+    assert requests[2].usage.output_tokens == 7
+    assert requests[2].usage.cache_creation_input_tokens == 40
+
+
+def test_timeline_keeps_the_ttl_buckets_of_each_request(
+    timeline: tuple[TimelineItem, ...],
+) -> None:
+    requests = [item for item in timeline if isinstance(item, RequestUsage)]
+
+    assert requests[0].usage.ephemeral_1h_input_tokens == 221
+    assert requests[1].usage.ephemeral_5m_input_tokens == 59734
+
+
+def test_timeline_of_an_empty_file_is_empty() -> None:
+    assert parse_timeline([]) == ()
+
+
+def test_existing_transcript_view_ignores_the_new_metadata() -> None:
+    cut = read_transcript(COMPACTION_FIXTURE)
+
+    assert all_text(cut.entries) == "part one\npart two"
+    assert len(cut.requests) == 3

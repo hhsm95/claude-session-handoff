@@ -118,10 +118,51 @@ claude --plugin-dir /path/to/claude-session-handoff
 `/clear` stays a plain `/clear`: the plugin injects nothing into new sessions, so using a handoff
 is always your choice.
 
+## Compactions and savings
+
+The plugin also shapes the compactions Claude Code does on its own. Every compaction, whether it
+fires when the session has been idle, when the context hits its limit, or when you type
+`/compact`, is asked to write its summary in the handoff format, and the plugin keeps a copy next
+to your handoffs as `<UTC timestamp>-<session>.compact.md`.
+
+```text
+/session-handoff:savings
+```
+
+This command reads the transcripts Claude Code already keeps under `~/.claude/projects/`, measures
+each compaction and reports the totals. It never reaches the model.
+
+- **What it compares.** Without the compaction, coming back after the cache TTL has passed would
+  re-write the whole context (`preTokens`) as uncached input. With it, the first request after the
+  compaction writes a much smaller context. The report shows both totals and the difference. If
+  the cache was still alive, the baseline is only an estimate of the usual write of one turn, and
+  the report says so.
+- **Auto idle and auto limit.** Automatic compactions are reported in two groups: `auto idle`,
+  when the session had been idle for about an hour or more, and `auto limit`, when the context
+  filled up while you were working.
+- **Overhead is separate.** The compaction itself reads the old context from the cache and writes
+  a summary. Those tokens are of different kinds than the uncached input being compared, so they
+  are reported on their own line and never subtracted from the savings.
+- **Unused compactions count apart.** A compaction with no later request in the same transcript
+  has nothing to compare against yet. It is counted as unused, adds its overhead, and becomes a
+  measured one the next time you run the command after the session continues.
+- **Where the results live.** Measurements are appended to `~/.claude/handoffs/savings.jsonl`
+  (private, never trimmed by retention), so running the command twice does not count anything
+  twice.
+
+No savings figure is published here yet: the numbers come from your own sessions.
+
 ## Files and privacy
 
 - Handoffs and digests are saved under `~/.claude/handoffs/<project>/` as
   `<UTC timestamp>-<session>.md` and `.digest.md`. The last 10 pairs per project are kept.
+- The summary of each compaction is saved next to them as `<UTC timestamp>-<session>.compact.md`,
+  with secrets redacted. The last 10 of these per project are kept, counted apart from the pairs.
+- The savings ledger is `~/.claude/handoffs/savings.jsonl`: one line per measured compaction (token
+  counts, trigger, timestamps and the project's folder name; no conversation text). It is never
+  deleted automatically.
+- `~/.claude/handoffs/pending/` holds empty marker files, one per session that was compacted and
+  is not measured yet. `Stop` removes each one once it has measured that session.
 - Diagnostics go to `~/.claude/handoffs/handoff.log`.
 - Folders are created `0700` and files `0600`. In warm mode, Claude Code's `Write` tool creates the
   handoff with your umask; the `0700` folder still keeps other users out.

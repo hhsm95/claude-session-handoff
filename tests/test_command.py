@@ -1,6 +1,23 @@
 import pytest
 
-from session_handoff.command import HandoffCommand, parse_command
+from session_handoff.command import HandoffCommand, is_savings_command, parse_command
+
+
+@pytest.mark.parametrize(
+    "prompt",
+    ["/savings", "/session-handoff:savings", "  /savings", "\t/savings\n", "/savings extra words"],
+)
+def test_savings_command_is_recognised(prompt: str) -> None:
+    assert is_savings_command(prompt)
+    assert parse_command(prompt) is None
+
+
+@pytest.mark.parametrize(
+    "prompt",
+    ["/savingsx", "please /savings", "", "/handoff", "/session-handoff:savingsx", "//savings"],
+)
+def test_other_prompts_are_not_the_savings_command(prompt: str) -> None:
+    assert not is_savings_command(prompt)
 
 
 @pytest.mark.parametrize(

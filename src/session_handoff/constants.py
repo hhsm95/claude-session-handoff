@@ -8,6 +8,10 @@ SECONDS_PER_MINUTE: Final = 60
 WARM_MAX_IDLE_ONE_HOUR_TTL_SECONDS: Final = 50 * 60
 WARM_MAX_IDLE_FIVE_MINUTE_TTL_SECONDS: Final = 4 * 60
 
+# --- Prompt cache TTLs (seconds) ---------------------------------------------------------------
+CACHE_TTL_ONE_HOUR_SECONDS: Final = 60 * 60
+CACHE_TTL_FIVE_MINUTE_SECONDS: Final = 5 * 60
+
 # --- Size caps ---------------------------------------------------------------------------------
 DIGEST_MAX_CHARS: Final = 400_000
 MODEL_DOCUMENT_MAX_CHARS: Final = 24_000
@@ -166,7 +170,13 @@ HAIKU_REPORTED_ERROR_TEMPLATE: Final = "the Haiku call reported an error: {resul
 
 # --- Paths -------------------------------------------------------------------------------------
 HANDOFFS_DIR: Final = "~/.claude/handoffs"
+PROJECTS_DIR: Final = "~/.claude/projects"
+TRANSCRIPT_GLOB: Final = "*/*.jsonl"
 LOG_FILE_NAME: Final = "handoff.log"
+LOGGER_NAME: Final = "session_handoff"
+RETENTION_FAILURE_LOG_MESSAGE: Final = "retention failed"
+SAVINGS_LEDGER_FILE_NAME: Final = "savings.jsonl"
+SAVINGS_LEDGER_VERSION: Final = 1
 # Handoffs, digests and the log hold conversation content: owner-only on POSIX.
 PRIVATE_DIR_MODE: Final = 0o700
 PRIVATE_FILE_MODE: Final = 0o600
@@ -176,12 +186,22 @@ FILE_TIMESTAMP_FORMAT: Final = "%Y%m%d-%H%M%S"
 SESSION_ID_FILE_CHARS: Final = 8
 SESSION_ID_FALLBACK: Final = "session"
 HANDOFF_STEM_PATTERN: Final = r"\d{8}-\d{6}-[A-Za-z0-9]{1,8}"
+COMPACT_FILE_SUFFIX: Final = ".compact.md"
+PENDING_DIR_NAME: Final = "pending"
+SESSION_ID_PATTERN: Final = r"[A-Za-z0-9-]{1,64}"
 
 # --- Command and hook protocol -----------------------------------------------------------------
-COMMAND_PATTERN: Final = r"^\s*/(session-handoff:)?handoff(\s|$)"
+COMMAND_PATTERN: Final = r"^\s*/(session-handoff:)?(handoff|savings)(\s|$)"
+HANDOFF_COMMAND_PATTERN: Final = r"^\s*/(session-handoff:)?handoff(\s|$)"
+SAVINGS_COMMAND_PATTERN: Final = r"^\s*/(session-handoff:)?savings(\s|$)"
+PLUGIN_VERSION: Final = "0.1.0"  # a test keeps it equal to `.claude-plugin/plugin.json`
 HAIKU_FLAG: Final = "--haiku"
 CONTEXT_BLOCK_TAG: Final = "session-handoff"
-HOOK_EVENT_NAME: Final = "UserPromptSubmit"
+USER_PROMPT_SUBMIT_EVENT_NAME: Final = "UserPromptSubmit"
+PRE_COMPACT_EVENT_NAME: Final = "PreCompact"
+POST_COMPACT_EVENT_NAME: Final = "PostCompact"
+STOP_EVENT_NAME: Final = "Stop"
+HOOK_EVENT_KEY: Final = "hook_event_name"
 
 # --- User-facing strings -----------------------------------------------------------------------
 HOOK_INACTIVE_MESSAGE: Final = "The session-handoff hook is not active; check /hooks."
@@ -197,6 +217,60 @@ HOOK_INPUT_MISSING_FIELD_TEMPLATE: Final = "the hook input has no '{field}'"
 EMPTY_CONVERSATION_MESSAGE: Final = "the transcript has no conversation to hand off"
 UNKNOWN_IDLE_PLACEHOLDER: Final = "?"
 CHARS_PER_TOKEN: Final = 4
+
+# --- Compaction hooks --------------------------------------------------------------------------
+# Claude Code adds this to the user's own `/compact <text>`, so it never repeats that text.
+PRE_COMPACT_INTRO: Final = (
+    "This summary will be used to resume the work in a fresh context. Write it with the "
+    "sections below instead of the default numbered sections; do not also write the default "
+    "numbered sections."
+)
+# The compaction sees the whole conversation, so it writes every section itself, Key files and
+# Branch / commits included.
+PRE_COMPACT_FORMAT_INSTRUCTIONS: Final = (
+    "Use exactly this format, with the headings in English as written:\n"
+    "{format}\n"
+    "Under Key files, list the paths of the files you read or edited and what each one is for.\n"
+    "Under Branch / commits, give the branch, the relevant commits and the state of the "
+    "working tree, as far as they are known.\n"
+    "Keep the exact commands and error messages needed to continue the work.\n"
+    "Write the body in the language the conversation uses."
+)
+PRE_COMPACT_MAX_CHARS: Final = 10_000
+ANALYSIS_BLOCK_PATTERN: Final = r"\A\s*<analysis>.*?</analysis>"
+HOOK_FAILURE_LOG_TEMPLATE: Final = "{event} hook failed"
+
+# --- Savings report ----------------------------------------------------------------------------
+SAVINGS_ERROR_BLOCK_MESSAGE_TEMPLATE: Final = (
+    "Savings report failed: {error}. See {log_path} for details."
+)
+SAVINGS_FAILURE_LOG_MESSAGE: Final = "savings report failed"
+BACKFILL_UNREADABLE_LOG_TEMPLATE: Final = "back-fill skipped an unreadable transcript: {path}"
+SAVINGS_EMPTY_MESSAGE: Final = "No compactions found in your transcripts: nothing to report yet."
+SAVINGS_HEADER_TEMPLATE: Final = (
+    "Compaction savings ({total} compactions: {measured} measured, {unused} unused)"
+)
+SAVINGS_WITHOUT_TEMPLATE: Final = "  Uncached tokens without compacting: {tokens:>{width}}"
+SAVINGS_WITH_TEMPLATE: Final = "  Uncached tokens with compacting:    {tokens:>{width}}"
+SAVINGS_SAVED_TEMPLATE: Final = "  Saved: {saved} tokens{percent}"
+SAVINGS_OVERHEAD_TEMPLATE: Final = (
+    "  Compaction overhead: {cached_read} cached read, {output} output"
+)
+SAVINGS_TRIGGERS_PREFIX: Final = "  By trigger: "
+SAVINGS_TRIGGER_SEPARATOR: Final = " · "
+SAVINGS_TRIGGER_TEMPLATE: Final = "{trigger} {count}{percent}"
+SAVINGS_PERCENT_TEMPLATE: Final = " ({value:.1f}%)"
+SAVINGS_NO_TRIGGER_LABEL: Final = "unknown"
+# An automatic compaction after at least this much quiet is the idle kind: the cache had already
+# expired. After less, the context hit its limit while the session was in use.
+IDLE_COMPACTION_MIN_IDLE_SECONDS: Final = 30 * SECONDS_PER_MINUTE
+SAVINGS_AUTO_TRIGGER: Final = "auto"
+SAVINGS_AUTO_IDLE_LABEL: Final = "auto idle"
+SAVINGS_AUTO_LIMIT_LABEL: Final = "auto limit"
+SAVINGS_UNKNOWN_TEMPLATE: Final = "  Not measurable (unknown cache TTL or metadata): {count}"
+SAVINGS_ESTIMATE_NOTE: Final = (
+    'Estimate: "without compacting" assumes the cache expired when the gap exceeded its TTL.'
+)
 
 # --- Clipboard ---------------------------------------------------------------------------------
 CLIPBOARD_COMMAND: Final = "pbcopy"
