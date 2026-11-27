@@ -2,7 +2,7 @@
 
 - [x] 1.1 Probe plugin `spike/compact-probe/` with `PreCompact`, `PostCompact` and `Stop` hooks that log their stdin JSON to a file; `PreCompact` prints a recognizable instruction ("start the summary with the word PROBE")
 - [x] 1.2 [user] With `claude --plugin-dir spike/compact-probe`, run `/compact` and `/compact keep X`; confirm the summary follows the probe instruction, and whether the user's text is still honoured (replace vs extend)
-- [ ] 1.3 [user] With `CLAUDE_CODE_IDLE_COMPACT_MIN_TOKENS=100000` and a session over 100K, leave it idle ~1 h; confirm `PreCompact`/`PostCompact` fire with `trigger: "auto"`, the instruction is applied, and `Stop` after returning sees the first post-boundary request in the transcript
+- [x] 1.3 [user] With `CLAUDE_CODE_IDLE_COMPACT_MIN_TOKENS=100000` and a session over 100K, leave it idle ~1 h; confirm `PreCompact`/`PostCompact` fire with `trigger: "auto"`, the instruction is applied, and `Stop` after returning sees the first post-boundary request in the transcript
 - [ ] 1.4 Record findings in `design.md` (D3, D5, Open Questions), adjust specs if needed, and remove `spike/` from the working tree
 
 ## 2. Transcript boundary metadata (D9)
