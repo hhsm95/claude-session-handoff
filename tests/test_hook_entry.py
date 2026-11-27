@@ -13,7 +13,7 @@ from types import ModuleType
 import pytest
 
 from conftest import VALID_HANDOFF_TEXT, TranscriptWriter
-from session_handoff.constants import COMMAND_PATTERN
+from session_handoff.constants import COMMAND_PATTERN, PLUGIN_VERSION
 
 HOOK_SCRIPT = Path(__file__).resolve().parent.parent / "hooks" / "run.py"
 
@@ -210,3 +210,153 @@ def test_a_system_exit_inside_the_pipeline_still_blocks_the_command(
 
     assert exit_info.value.code == BLOCKING_EXIT_CODE
     assert "failed before it could run (1)" in capsys.readouterr().err
+
+
+# --- failure policy per event -------------------------------------------------------------------
+
+
+def run_broken_event(root: Path, payload: dict[str, str]) -> subprocess.CompletedProcess[str]:
+    return subprocess.run(
+        [sys.executable, "-I", str(root / "hooks" / "run.py")],
+        input=json.dumps(payload),
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+
+
+@pytest.mark.parametrize("prompt", ["/savings", "/session-handoff:savings", "/savings extra"])
+def test_the_savings_command_is_blocked_when_the_package_cannot_load(
+    tmp_path: Path, prompt: str
+) -> None:
+    result = run_broken(broken_plugin_root(tmp_path), prompt)
+
+    assert result.returncode == BLOCKING_EXIT_CODE
+
+
+@pytest.mark.parametrize(
+    ("prompt", "named", "other"),
+    [
+        ("/savings", "/savings", "/handoff"),
+        ("/session-handoff:savings", "/savings", "/handoff"),
+        ("/handoff focus", "/handoff", "/savings"),
+    ],
+)
+def test_the_failure_message_names_the_command_that_was_blocked(
+    tmp_path: Path, prompt: str, named: str, other: str
+) -> None:
+    result = run_broken(broken_plugin_root(tmp_path), prompt)
+
+    assert f"The {named} prompt was blocked" in result.stderr
+    assert other not in result.stderr
+
+
+@pytest.mark.parametrize("prompt", ["/savingsx", "/session-handoff:savingsx", "savings"])
+def test_lookalike_prompts_are_not_blocked_when_the_package_cannot_load(
+    tmp_path: Path, prompt: str
+) -> None:
+    result = run_broken(broken_plugin_root(tmp_path), prompt)
+
+    assert result.returncode == 0
+
+
+@pytest.mark.parametrize("event", ["PreCompact", "PostCompact", "Stop"])
+def test_compaction_and_stop_events_exit_0_silently_when_the_package_cannot_load(
+    tmp_path: Path, event: str
+) -> None:
+    payload = {"hook_event_name": event, "prompt": "/handoff", "session_id": "s1"}
+
+    result = run_broken_event(broken_plugin_root(tmp_path), payload)
+
+    assert result.returncode == 0
+    assert result.stdout == ""
+    assert result.stderr == ""
+
+
+def test_an_explicit_user_prompt_event_is_still_blocked(tmp_path: Path) -> None:
+    payload = {"hook_event_name": "UserPromptSubmit", "prompt": "/handoff"}
+
+    result = run_broken_event(broken_plugin_root(tmp_path), payload)
+
+    assert result.returncode == BLOCKING_EXIT_CODE
+
+
+@pytest.mark.parametrize("event", ["PreCompact", "PostCompact", "Stop"])
+def test_the_script_exits_0_for_a_non_prompt_event_on_an_unsupported_python(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str], event: str
+) -> None:
+    script = load_run_script()
+    monkeypatch.setattr(script.sys, "version_info", (3, 6, 0))
+    raw = json.dumps({"hook_event_name": event, "prompt": "/handoff"}).encode()
+    monkeypatch.setattr(script.sys, "stdin", io.TextIOWrapper(io.BytesIO(raw)))
+
+    script.main()  # returns normally: no SystemExit
+
+    captured = capsys.readouterr()
+    assert captured.out == ""
+    assert captured.err == ""
+
+
+@pytest.mark.parametrize(
+    "payload",
+    [
+        {"hook_event_name": "PreCompact", "prompt": "/handoff", "trigger": "auto"},
+        {"hook_event_name": "PostCompact", "prompt": "/savings", "compact_summary": "x"},
+        {"hook_event_name": "Stop", "prompt": "/session-handoff:handoff", "session_id": "s1"},
+    ],
+)
+def test_a_failing_pipeline_cannot_block_a_non_prompt_event_even_if_its_prompt_matches(
+    monkeypatch: pytest.MonkeyPatch, payload: dict[str, str]
+) -> None:
+    script = load_run_script()
+
+    def fail(_raw_input: str) -> None:
+        raise RuntimeError("broken install")
+
+    monkeypatch.setattr(script, "run", fail)
+    raw = json.dumps(payload).encode()
+    monkeypatch.setattr(script.sys, "stdin", io.TextIOWrapper(io.BytesIO(raw)))
+
+    script.main()  # returns normally: no SystemExit
+
+
+def test_invalid_json_cannot_block(monkeypatch: pytest.MonkeyPatch) -> None:
+    script = load_run_script()
+    monkeypatch.setattr(script.sys, "stdin", io.TextIOWrapper(io.BytesIO(b"{broken")))
+
+    script.main()  # returns normally: no SystemExit
+
+
+# --- hooks.json ---------------------------------------------------------------------------------
+
+HOOKS_JSON = HOOK_SCRIPT.parent / "hooks.json"
+COMPACTION_EVENT_TIMEOUT_SECONDS = 30
+
+
+def hook_entries() -> dict[str, list[dict[str, object]]]:
+    registered = json.loads(HOOKS_JSON.read_text(encoding="utf-8"))["hooks"]
+    return {event: groups[0]["hooks"] for event, groups in registered.items()}
+
+
+def test_every_event_runs_the_same_command() -> None:
+    entries = hook_entries()
+
+    assert set(entries) == {"UserPromptSubmit", "PreCompact", "PostCompact", "Stop"}
+    commands = {hooks[0]["command"] for hooks in entries.values()}
+    assert len(commands) == 1
+
+
+@pytest.mark.parametrize("event", ["PreCompact", "PostCompact", "Stop"])
+def test_the_new_events_have_a_30_second_timeout_and_no_matcher(event: str) -> None:
+    registered = json.loads(HOOKS_JSON.read_text(encoding="utf-8"))["hooks"]
+
+    assert "matcher" not in registered[event][0]
+    assert hook_entries()[event][0]["timeout"] == COMPACTION_EVENT_TIMEOUT_SECONDS
+
+
+def test_the_plugin_version_constant_matches_the_manifest() -> None:
+    manifest = HOOK_SCRIPT.parent.parent / ".claude-plugin" / "plugin.json"
+
+    version = json.loads(manifest.read_text(encoding="utf-8"))["version"]
+
+    assert version == PLUGIN_VERSION

@@ -7,6 +7,17 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Added
+
+- Every compaction (idle, context limit or `/compact`) is now asked to write its summary in the
+  handoff format, and a copy is saved next to the handoffs as `.compact.md`.
+- `/session-handoff:savings` command: back-fills a ledger (`~/.claude/handoffs/savings.jsonl`)
+  from your transcripts and reports the uncached tokens each compaction saved, the compaction
+  overhead apart, and the compactions not yet used counted separately. Automatic compactions
+  are split into `auto idle` and `auto limit` by how long the session sat idle before them.
+- The compaction summary copy is redacted for secrets before it is saved, and retention keeps
+  the 10 newest summaries apart from the 10 newest handoff pairs.
+
 ## [0.1.0] - 2026-11-24
 
 ### Added

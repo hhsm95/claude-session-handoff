@@ -3,15 +3,21 @@
 import re
 from dataclasses import dataclass
 
-from session_handoff.constants import COMMAND_PATTERN, HAIKU_FLAG
+from session_handoff.constants import HAIKU_FLAG, HANDOFF_COMMAND_PATTERN, SAVINGS_COMMAND_PATTERN
 
-_COMMAND = re.compile(COMMAND_PATTERN)
+_COMMAND = re.compile(HANDOFF_COMMAND_PATTERN)
+_SAVINGS_COMMAND = re.compile(SAVINGS_COMMAND_PATTERN)
 
 
 @dataclass(frozen=True)
 class HandoffCommand:
     force_haiku: bool
     focus: str
+
+
+def is_savings_command(prompt: str) -> bool:
+    """Whether the prompt is `/savings`, which takes no arguments and ignores any given."""
+    return _SAVINGS_COMMAND.match(prompt) is not None
 
 
 def parse_command(prompt: str) -> HandoffCommand | None:

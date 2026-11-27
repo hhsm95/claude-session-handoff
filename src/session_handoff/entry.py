@@ -6,32 +6,36 @@ stdin, stdout, clock and tools.
 
 import functools
 import json
-import logging
-import os
 import sys
-from collections.abc import Callable, Iterator
-from contextlib import contextmanager
+from collections.abc import Callable
 from dataclasses import dataclass, replace
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import TextIO
 
+from session_handoff.backfill import backfill_ledger
 from session_handoff.clipboard import copy_to_clipboard
-from session_handoff.command import HandoffCommand, parse_command
+from session_handoff.command import HandoffCommand, is_savings_command, parse_command
+from session_handoff.compaction_hooks import run_post_compact, run_pre_compact, run_stop
 from session_handoff.constants import (
     CHARS_PER_TOKEN,
     CLIPBOARD_NOTE,
     COLD_READY_MESSAGE_TEMPLATE,
     ERROR_BLOCK_MESSAGE_TEMPLATE,
     HANDOFFS_DIR,
-    HOOK_INPUT_MISSING_FIELD_TEMPLATE,
-    HOOK_INPUT_NOT_OBJECT_MESSAGE,
+    HOOK_EVENT_KEY,
     KEY_FILES_MAX,
     LOG_FILE_NAME,
     MODEL_DOCUMENT_MAX_CHARS,
+    POST_COMPACT_EVENT_NAME,
+    PRE_COMPACT_EVENT_NAME,
     RESUME_LINE_TEMPLATE,
+    SAVINGS_ERROR_BLOCK_MESSAGE_TEMPLATE,
+    SAVINGS_FAILURE_LOG_MESSAGE,
     SECTION_SEPARATOR,
+    STOP_EVENT_NAME,
     UNKNOWN_IDLE_PLACEHOLDER,
+    USER_PROMPT_SUBMIT_EVENT_NAME,
     WARM_BLOCK_INTRO,
     WARM_CLOSING_TEMPLATE,
     WARM_CONTEXT_MAX_CHARS,
@@ -55,28 +59,19 @@ from session_handoff.handoff_doc import (
     validate_model_answer,
 )
 from session_handoff.hook_output import context_block, emit_block, emit_context
-from session_handoff.mode import Mode, ModeDecision, decide_mode_safely
-from session_handoff.storage import (
-    HandoffPaths,
-    apply_retention,
-    ensure_private_dir,
-    handoff_paths,
-    open_private_file,
-    write_digest,
-    write_handoff,
+from session_handoff.hook_runtime import (
+    LOGGER,
+    HookDependencies,
+    apply_retention_safely,
+    base_dir_of,
+    file_logging,
+    string_fields,
 )
+from session_handoff.ledger import read_ledger
+from session_handoff.mode import Mode, ModeDecision, decide_mode_safely
+from session_handoff.savings_report import render_report
+from session_handoff.storage import HandoffPaths, handoff_paths, write_digest, write_handoff
 from session_handoff.transcript import Transcript, read_transcript
-
-_LOGGER = logging.getLogger("session_handoff")
-_LOG_FORMAT = "%(asctime)s %(levelname)s %(message)s"
-
-
-@dataclass(frozen=True)
-class HookDependencies:
-    now: Callable[[], datetime]
-    base_dir: Path | None
-    run_haiku: Callable[[str, str], str]
-    copy_to_clipboard: Callable[[str], bool]
 
 
 @dataclass(frozen=True)
@@ -104,7 +99,29 @@ def main(raw_input: str) -> None:
         run_haiku=run_haiku,
         copy_to_clipboard=copy_to_clipboard,
     )
-    run_hook(raw_input, sys.stdout, dependencies)
+    dispatch_hook(raw_input, sys.stdout, dependencies)
+
+
+def dispatch_hook(raw_input: str, stdout: TextIO, dependencies: HookDependencies) -> None:
+    """Route one hook call by its `hook_event_name`; an unknown event is ignored silently.
+
+    A payload without the field is a `UserPromptSubmit`, the only event the plugin had before.
+    """
+    event = _event_of(raw_input)
+    handler = _EVENT_HANDLERS.get(event) if event is not None else None
+    if handler is not None:
+        handler(raw_input, stdout, dependencies)
+
+
+def _event_of(raw_input: str) -> str | None:
+    try:
+        payload = json.loads(raw_input)
+    except json.JSONDecodeError:
+        return None
+    if not isinstance(payload, dict):
+        return None
+    event = payload.get(HOOK_EVENT_KEY, USER_PROMPT_SUBMIT_EVENT_NAME)
+    return event if isinstance(event, str) else None
 
 
 def run_hook(raw_input: str, stdout: TextIO, dependencies: HookDependencies) -> None:
@@ -114,25 +131,75 @@ def run_hook(raw_input: str, stdout: TextIO, dependencies: HookDependencies) -> 
     A failure of the block itself propagates to `hooks/run.py`, which exits 2.
     """
     prompt = _prompt_of(raw_input)
-    command = parse_command(prompt) if prompt is not None else None
-    if command is None:
+    if prompt is None:
         return
+    command = parse_command(prompt)
+    if command is not None:
+
+        def deliver_handoff(base_dir: Path) -> None:
+            _deliver(json.loads(raw_input), command, dependencies, base_dir, stdout)
+
+        _run_blocking(
+            deliver_handoff, ERROR_BLOCK_MESSAGE_TEMPLATE, "handoff failed", dependencies, stdout
+        )
+    elif is_savings_command(prompt):
+
+        def deliver_savings(base_dir: Path) -> None:
+            _deliver_savings(dependencies, base_dir, stdout)
+
+        _run_blocking(
+            deliver_savings,
+            SAVINGS_ERROR_BLOCK_MESSAGE_TEMPLATE,
+            SAVINGS_FAILURE_LOG_MESSAGE,
+            dependencies,
+            stdout,
+        )
+
+
+def _run_blocking(
+    deliver: Callable[[Path], None],
+    error_template: str,
+    log_message: str,
+    dependencies: HookDependencies,
+    stdout: TextIO,
+) -> None:
+    """Run a command's pipeline under the file log; any failure becomes the block's message."""
     log_location = f"{HANDOFFS_DIR}/{LOG_FILE_NAME}"
     try:
-        base_dir = _base_dir(dependencies)
+        base_dir = base_dir_of(dependencies)
         log_path = base_dir / LOG_FILE_NAME
         log_location = str(log_path)
-        with _file_logging(log_path):
+        with file_logging(log_path):
             try:
-                _deliver(json.loads(raw_input), command, dependencies, base_dir, stdout)
+                deliver(base_dir)
             except Exception:
-                _LOGGER.exception("handoff failed")
+                LOGGER.exception(log_message)
                 raise
-    except Exception as error:  # fail safe: a failed handoff must never reach the model
-        reason = ERROR_BLOCK_MESSAGE_TEMPLATE.format(
+    except Exception as error:  # fail safe: a failed command must never reach the model
+        reason = error_template.format(
             error=str(error) or type(error).__name__, log_path=log_location
         )
         emit_block(reason, stdout)
+
+
+def _deliver_savings(dependencies: HookDependencies, base_dir: Path, stdout: TextIO) -> None:
+    """Back-fill the ledger from the transcripts, then block with the report."""
+    backfill_ledger(
+        dependencies.projects_dir,
+        base_dir,
+        read_timeline=dependencies.read_timeline,
+        plugin_version=dependencies.plugin_version,
+        recorded_at=dependencies.now(),
+    )
+    emit_block(render_report(read_ledger(base_dir)), stdout)
+
+
+_EVENT_HANDLERS: dict[str, Callable[[str, TextIO, HookDependencies], None]] = {
+    USER_PROMPT_SUBMIT_EVENT_NAME: run_hook,
+    PRE_COMPACT_EVENT_NAME: run_pre_compact,
+    POST_COMPACT_EVENT_NAME: run_post_compact,
+    STOP_EVENT_NAME: run_stop,
+}
 
 
 def _prompt_of(raw_input: str) -> str | None:
@@ -142,32 +209,6 @@ def _prompt_of(raw_input: str) -> str | None:
         return None
     prompt = payload.get("prompt") if isinstance(payload, dict) else None
     return prompt if isinstance(prompt, str) else None
-
-
-def _base_dir(dependencies: HookDependencies) -> Path:
-    if dependencies.base_dir is not None:
-        return dependencies.base_dir
-    return Path(HANDOFFS_DIR).expanduser()
-
-
-@contextmanager
-def _file_logging(log_path: Path) -> Iterator[None]:
-    """Log to `log_path` while the pipeline runs; without a writable file, log nowhere."""
-    try:
-        ensure_private_dir(log_path.parent)
-        os.close(open_private_file(log_path, os.O_WRONLY | os.O_APPEND))
-        handler: logging.Handler = logging.FileHandler(log_path, encoding="utf-8")
-    except OSError:
-        handler = logging.NullHandler()
-    handler.setFormatter(logging.Formatter(_LOG_FORMAT))
-    _LOGGER.addHandler(handler)
-    _LOGGER.setLevel(logging.INFO)
-    _LOGGER.propagate = False
-    try:
-        yield
-    finally:
-        _LOGGER.removeHandler(handler)
-        handler.close()
 
 
 def _deliver(
@@ -182,7 +223,7 @@ def _deliver(
     load_transcript = functools.cache(lambda: read_transcript(hook_input.transcript_path))
     decision = decide_mode_safely(load_transcript, now, force_haiku=command.force_haiku)
     prepared = _prepare(hook_input, load_transcript(), now, base_dir)
-    _LOGGER.info("mode=%s idle_minutes=%s", decision.mode.value, decision.idle_minutes)
+    LOGGER.info("mode=%s idle_minutes=%s", decision.mode.value, decision.idle_minutes)
     if decision.mode is Mode.WARM:
         _deliver_warm(command, prepared, dependencies, stdout)
     else:
@@ -190,14 +231,7 @@ def _deliver(
 
 
 def _parse_input(payload: object) -> _HookInput:
-    if not isinstance(payload, dict):
-        raise ValueError(HOOK_INPUT_NOT_OBJECT_MESSAGE)
-    fields = {}
-    for key in ("prompt", "session_id", "transcript_path", "cwd"):
-        value = payload.get(key)
-        if not isinstance(value, str):
-            raise ValueError(HOOK_INPUT_MISSING_FIELD_TEMPLATE.format(field=key))
-        fields[key] = value
+    fields = string_fields(payload, ("prompt", "session_id", "transcript_path", "cwd"))
     return _HookInput(
         prompt=fields["prompt"],
         session_id=fields["session_id"],
@@ -233,7 +267,7 @@ def _deliver_cold(
     answer = dependencies.run_haiku(haiku_input, system_prompt)
     document = assemble_handoff(validate_model_answer(answer), prepared.extras)
     write_handoff(prepared.paths, document)
-    _apply_retention_safely(prepared.paths.handoff.parent)
+    apply_retention_safely(prepared.paths.handoff.parent)
     copied = dependencies.copy_to_clipboard(_resume_line(prepared.paths))
     idle = decision.idle_minutes
     message = COLD_READY_MESSAGE_TEMPLATE.format(
@@ -252,17 +286,9 @@ def _deliver_warm(
     dependencies: HookDependencies,
     stdout: TextIO,
 ) -> None:
-    _apply_retention_safely(prepared.paths.handoff.parent)
+    apply_retention_safely(prepared.paths.handoff.parent)
     dependencies.copy_to_clipboard(_resume_line(prepared.paths))
     emit_context(_warm_block_text(command, prepared), stdout)
-
-
-def _apply_retention_safely(project_dir: Path) -> None:
-    """Retention is housekeeping: failing must not turn a produced handoff into a failure."""
-    try:
-        apply_retention(project_dir)
-    except Exception:
-        _LOGGER.exception("retention failed")
 
 
 def _warm_block_text(command: HandoffCommand, prepared: _Prepared) -> str:

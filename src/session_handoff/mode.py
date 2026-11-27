@@ -5,7 +5,9 @@ from dataclasses import dataclass
 from datetime import datetime, timedelta
 from enum import Enum
 
+from session_handoff.cache_ttl import detect_cache_ttl
 from session_handoff.constants import (
+    CACHE_TTL_FIVE_MINUTE_SECONDS,
     SECONDS_PER_MINUTE,
     WARM_MAX_IDLE_FIVE_MINUTE_TTL_SECONDS,
     WARM_MAX_IDLE_ONE_HOUR_TTL_SECONDS,
@@ -50,13 +52,12 @@ def decide_mode_safely(
 
 
 def _max_warm_idle(transcript: Transcript) -> timedelta | None:
-    for request in reversed(transcript.requests):
-        # The 5m tokens are the conversation tail, so they expire first even beside 1h tokens.
-        if request.usage.ephemeral_5m_input_tokens > 0:
-            return timedelta(seconds=WARM_MAX_IDLE_FIVE_MINUTE_TTL_SECONDS)
-        if request.usage.ephemeral_1h_input_tokens > 0:
-            return timedelta(seconds=WARM_MAX_IDLE_ONE_HOUR_TTL_SECONDS)
-    return None
+    ttl = detect_cache_ttl(transcript.requests)
+    if ttl is None:
+        return None
+    if ttl == timedelta(seconds=CACHE_TTL_FIVE_MINUTE_SECONDS):
+        return timedelta(seconds=WARM_MAX_IDLE_FIVE_MINUTE_TTL_SECONDS)
+    return timedelta(seconds=WARM_MAX_IDLE_ONE_HOUR_TTL_SECONDS)
 
 
 def _idle_time(transcript: Transcript, now: datetime) -> timedelta | None:

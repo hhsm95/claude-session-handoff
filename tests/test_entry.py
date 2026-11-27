@@ -25,8 +25,9 @@ from session_handoff.constants import (
     WARM_FOCUS_MAX_CHARS,
 )
 from session_handoff.digest import FileActivity
-from session_handoff.entry import HookDependencies, run_hook
+from session_handoff.entry import run_hook
 from session_handoff.haiku import HaikuError
+from session_handoff.hook_runtime import HookDependencies
 from session_handoff.storage import project_slug
 from session_handoff.transcript import Entry
 
@@ -305,7 +306,9 @@ def test_a_failure_while_setting_up_logging_still_blocks(
     def broken_ensure_private_dir(_path: Path) -> None:
         raise RuntimeError("no home directory")
 
-    monkeypatch.setattr("session_handoff.entry.ensure_private_dir", broken_ensure_private_dir)
+    monkeypatch.setattr(
+        "session_handoff.hook_runtime.ensure_private_dir", broken_ensure_private_dir
+    )
     recorder = Recorder()
     transcript = write_transcript(JUST_NOW, cache_1h=True)
 
@@ -621,7 +624,7 @@ def test_a_retention_failure_never_turns_a_produced_handoff_into_a_failure(
     def failing_retention(_folder: Path) -> None:
         raise PermissionError("cannot delete")
 
-    monkeypatch.setattr("session_handoff.entry.apply_retention", failing_retention)
+    monkeypatch.setattr("session_handoff.hook_runtime.apply_retention", failing_retention)
     transcript = write_transcript(last_activity, cache_1h=True)
 
     output = run(tmp_path, "/handoff", transcript, Recorder())
@@ -655,14 +658,6 @@ def test_the_command_body_tells_the_model_the_exact_inactive_hook_sentence() -> 
     command_file = Path(__file__).resolve().parent.parent / "commands" / "handoff.md"
 
     assert HOOK_INACTIVE_MESSAGE in command_file.read_text(encoding="utf-8")
-
-
-def test_the_plugin_registers_only_the_user_prompt_submit_hook() -> None:
-    hooks_file = Path(__file__).resolve().parent.parent / "hooks" / "hooks.json"
-
-    registered = json.loads(hooks_file.read_text(encoding="utf-8"))["hooks"]
-
-    assert list(registered) == ["UserPromptSubmit"]
 
 
 def test_the_file_activity_is_computed_once_per_hook_call(

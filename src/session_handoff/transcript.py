@@ -82,6 +82,88 @@ class Transcript:
     """Usage of every main-thread request in the whole file, in order."""
 
 
+@dataclass(frozen=True)
+class CompactBoundary:
+    """A main-thread `compact_boundary`; every field but `uuid` is `None` when absent or invalid."""
+
+    uuid: str
+    timestamp: datetime | None
+    trigger: str | None
+    pre_tokens: int | None
+    post_tokens: int | None
+    session_id: str | None
+    cwd: str | None
+
+
+TimelineItem: TypeAlias = CompactBoundary | RequestUsage
+
+
+def read_timeline(path: Path) -> tuple[TimelineItem, ...]:
+    """Read a transcript file as a timeline; a missing file raises."""
+    with path.open(encoding="utf-8", errors="replace") as handle:
+        return parse_timeline(handle)
+
+
+def parse_timeline(lines: Iterable[str]) -> tuple[TimelineItem, ...]:
+    """Main-thread boundaries and requests in file order.
+
+    A boundary without a `uuid` has no identity to be measured by and is dropped. Responses are
+    merged by `message.id` within the stretch between two boundaries.
+    """
+    timeline: list[TimelineItem] = []
+    stretch: list[Entry] = []
+
+    def close_stretch() -> None:
+        timeline.extend(
+            RequestUsage(entry.message_id, entry.timestamp, entry.usage)
+            for entry in _merge_by_message_id(stretch)
+            if entry.usage is not None
+        )
+        stretch.clear()
+
+    for raw_line in lines:
+        record = _decode_object(raw_line)
+        if record is None or record.get("isSidechain") is True:
+            continue
+        if _is_compact_boundary(record):
+            boundary = _parse_boundary(record)
+            if boundary is not None:
+                close_stretch()
+                timeline.append(boundary)
+            continue
+        entry = _parse_entry(record)
+        if entry is not None:
+            stretch.append(entry)
+    close_stretch()
+    return tuple(timeline)
+
+
+def _parse_boundary(record: JsonObject) -> CompactBoundary | None:
+    uuid = record.get("uuid")
+    if not isinstance(uuid, str) or not uuid:
+        return None
+    metadata = record.get("compactMetadata")
+    fields = metadata if isinstance(metadata, dict) else {}
+    trigger = fields.get("trigger")
+    session_id = record.get("sessionId")
+    cwd = record.get("cwd")
+    return CompactBoundary(
+        uuid=uuid,
+        timestamp=_parse_timestamp(record.get("timestamp")),
+        trigger=trigger if isinstance(trigger, str) else None,
+        pre_tokens=_optional_count(fields.get("preTokens")),
+        post_tokens=_optional_count(fields.get("postTokens")),
+        session_id=session_id if isinstance(session_id, str) else None,
+        cwd=cwd if isinstance(cwd, str) else None,
+    )
+
+
+def _optional_count(value: object) -> int | None:
+    if isinstance(value, bool) or not isinstance(value, int) or value < 0:
+        return None
+    return value
+
+
 def read_transcript(path: Path) -> Transcript:
     """Read a transcript file; unreadable lines are skipped, a missing file raises."""
     with path.open(encoding="utf-8", errors="replace") as handle:
