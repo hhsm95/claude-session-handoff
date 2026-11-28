@@ -7,6 +7,13 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Fixed
+
+- Asking for a handoff or the savings report in your own words no longer ends in a misleading
+  "hook is not active" reply. The hook only runs when the command is typed, so the reply now asks
+  you to type `/session-handoff:handoff` (or `/session-handoff:savings`) and only then points at
+  `/hooks`.
+
 ## [0.2.0] - 2026-11-27
 
 ### Added
