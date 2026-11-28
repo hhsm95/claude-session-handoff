@@ -1,6 +1,6 @@
 {
   "name": "session-handoff",
-  "version": "0.2.0",
+  "version": "0.2.1",
   "description": "Turn the current Claude Code session into a handoff document you can resume in a fresh session without paying for a full context re-read.",
   "author": {
     "name": "Hugo Sandoval"
