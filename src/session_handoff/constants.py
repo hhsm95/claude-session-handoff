@@ -204,7 +204,14 @@ STOP_EVENT_NAME: Final = "Stop"
 HOOK_EVENT_KEY: Final = "hook_event_name"
 
 # --- User-facing strings -----------------------------------------------------------------------
-HOOK_INACTIVE_MESSAGE: Final = "The session-handoff hook is not active; check /hooks."
+HOOK_INACTIVE_MESSAGE: Final = (
+    "Type /session-handoff:handoff yourself: the handoff only runs when you type the command. "
+    "If you already typed it, the session-handoff hook is not active; check /hooks."
+)
+SAVINGS_HOOK_INACTIVE_MESSAGE: Final = (
+    "Type /session-handoff:savings yourself: the report only runs when you type the command. "
+    "If you already typed it, the session-handoff hook is not active; check /hooks."
+)
 COLD_READY_MESSAGE_TEMPLATE: Final = (
     "Handoff ready with Haiku ({chars} chars, ~{tokens} tokens; idle {idle_minutes} min).\n"
     "To resume: /clear, then paste this line{clipboard_note}:\n"

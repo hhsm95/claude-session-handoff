@@ -20,6 +20,7 @@ from session_handoff.constants import (
     MENTION_GUARD,
     NO_GIT_MESSAGE,
     RETENTION_PAIRS_PER_PROJECT,
+    SAVINGS_HOOK_INACTIVE_MESSAGE,
     TRUNCATION_ELLIPSIS,
     WARM_CONTEXT_MAX_CHARS,
     WARM_FOCUS_MAX_CHARS,
@@ -658,6 +659,12 @@ def test_the_command_body_tells_the_model_the_exact_inactive_hook_sentence() -> 
     command_file = Path(__file__).resolve().parent.parent / "commands" / "handoff.md"
 
     assert HOOK_INACTIVE_MESSAGE in command_file.read_text(encoding="utf-8")
+
+
+def test_the_savings_command_body_tells_the_model_the_exact_inactive_hook_sentence() -> None:
+    command_file = Path(__file__).resolve().parent.parent / "commands" / "savings.md"
+
+    assert SAVINGS_HOOK_INACTIVE_MESSAGE in command_file.read_text(encoding="utf-8")
 
 
 def test_the_file_activity_is_computed_once_per_hook_call(
